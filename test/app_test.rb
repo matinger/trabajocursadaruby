@@ -22,10 +22,14 @@ class AppTest < MiniTest::Unit::TestCase
     assert_equal 'Hello World', last_response.body
   end
   
-  def test_createResource
-  	Resource.create(name: "Computadora") 
-  	assert_equal 1, Resource.all.size
-  	user = Resource.first
-  	p "USUARIO CON NOMBRE " + user.name
+  def test_availavility_post_201
+    post '/resources/1/bookings', "from" => "2014-02-01T00:00:00Z", "to" => "2014-02-01T10:00:00Z"
+    assert_equal 201, last_response.status
   end
+
+  def test_availavility_post_409
+    post '/resources/1/bookings', "from" => "2014-02-01T14:00:00Z", "to" => "2014-02-01T17:00:00Z"
+    assert_equal 409, last_response.status
+  end
+
 end
