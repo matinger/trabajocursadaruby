@@ -11,7 +11,7 @@ class CreateBookings < ActiveRecord::Migration
           t.belongs_to :user
           t.string :status
           t.datetime :start
-          t.datetime :end
+          t.datetime :end_time
           t.timestamps
       end
   end
