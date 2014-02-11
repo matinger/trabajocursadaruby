@@ -41,4 +41,9 @@ class AppTest < MiniTest::Unit::TestCase
     assert_equal 202, last_response.status
   end
 
+  def test_put
+    put '/resources/2/bookings/7'
+    assert_equal 200, last_response.status
+  end
+
 end

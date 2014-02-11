@@ -1,4 +1,5 @@
 module Links
+  
   def link_resource(resource_id, rel=true)
     {rel: rel ? "self" : "resource", uri: url("/resources/#{resource_id}")}
   end
@@ -8,7 +9,7 @@ module Links
   end
 
   def get_uri_booking(resource_id, booking_id)
-    url("/resource/#{resource_id}/bookings/#{booking_id}")
+    url("/resources/#{resource_id}/bookings/#{booking_id}")
   end
 
   def uri_booking(resource_id, booking_id, rel)
