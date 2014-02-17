@@ -4,12 +4,8 @@ require 'sinatra/activerecord'
 require_relative 'model/resource'
 require_relative 'model/booking'
 require_relative 'model/user'
-require_relative 'helpers/links.rb'
-require_relative 'helpers/util.rb'
+require_relative 'helpers/generatejson.rb'
 require 'json'
-
-include Links
-include Util
 
 ENV['USER_DEFAULT'] ||= 'admin@admin.com'
 ENV['RACK_ENV'] ||= 'development'
@@ -42,82 +38,86 @@ before do
 end
 
 get '/resources' do
-  url = [{rel: :self, uri: url('/resources')}]
-  resources = Resource.all.inject([]) {|sum, x| sum << x.resource_json.merge({links: [link_resource(x.id)]})}
-  #resources = Resource.all.inject([]) {|sum, x| sum << {name: x.name, description: x.description, links: [link_resource(x.id)]}}
-  JSON.pretty_generate({resources: resources, links: url})
+  url = [{rel: "self", uri: url('/resources')}]
+  resources = Resource.all.inject([]) {|sum, x| sum << GenerateJson.resource_json(x).merge({links: [GenerateJson.link_resource(x.id, url(""))]})}
+  JSON.pretty_generate({resources: resources, links: [GenerateJson.link_self(url("/resources/"))]})
 end
 
 get '/resources/:name' do
+  return 404 unless Resource.exists?(params[:name].to_i)
   res = Resource.find_by_id(params[:name])
-  JSON.pretty_generate({resource: {name: res.name, description: res.description, links: [{rel: "self", uri: url("/resources/#{res.id}")}, {rel: "bookings", uri: url("/resources/#{res.id}/bookings")} ]}})
+  JSON.pretty_generate({resource: GenerateJson.resource_json(res).merge({links: GenerateJson.link_resource_with_booking(res.id, url("")) }) })
 end
 
 get '/resources/:number/bookings' do
-  return 404 unless resource_exists?(params[:number])
+  return 404 unless Resource.exists?(params[:number].to_i)
   datetimeconv = params.has_key?("date") ? DateTime.iso8601(params["date"]+'T00:00:00Z') : DateTime.iso8601((Date.today + 1).to_s)
   limit = params.has_key?("limit") ? params["limit"] : "30"
   status = params.has_key?("status") ? params["status"] : "approved"
   status = nil if (status == "all")
-  bookings = bookings_from_resource_with_date(params[:number].to_i, datetimeconv, datetimeconv + limit.to_i, params["status"])
-  bookingsJSON = bookings.inject([]) {|sum, x| sum << {start: x.start, end: x.end_time, status: x.status, user: User.find_by_id(x.user_id).name, links: links_booking(params[:number], x.id) }}
+  resource = Resource.find_by_id(params[:number].to_i)
+  bookings = resource.bookings_with_date(datetimeconv, datetimeconv + limit.to_i, params["status"])
+ 
+  bookingsJSON = bookings.inject([]) {|sum, x| sum << GenerateJson.booking_json(x).merge({ links: GenerateJson.links_booking(params[:number], x.id, url("")) })}
   status 200
-  JSON.pretty_generate({bookings: bookingsJSON, links: [{rel: "self", uri: request.url}]})
+  JSON.pretty_generate({bookings: bookingsJSON, links: [GenerateJson.link_self(request.url)]})
 end
 
 
 get '/resources/:number/availability' do
+  return 404 unless Resource.exists?(params[:number])
   return 400 unless params.has_key?("date")
   datetimeSTART = DateTime.iso8601(params["date"]+'T00:00:00Z')
   datetimeEND = DateTime.iso8601(params["date"]+'T00:00:00Z') + params["limit"].to_i
-  bookings_approved = availability_resource_with_date(params[:number], datetimeSTART, datetimeEND, "approved")
-  
-  JSON.pretty_generate(isAvailable?(datetimeSTART, datetimeEND, bookings_approved))
+  resource = Resource.find_by_id(params[:number].to_i)
+  bookings_approved = resource.availabilities(datetimeSTART, datetimeEND).collect {|x| x.merge({links: GenerateJson.links_availability(params[:number], url(""))} )} 
+  JSON.pretty_generate({ availability: bookings_approved, links: [{rel: "self", uri: request.url}] })
 end
 
 post '/resources/:number/bookings' do
+  return 404 unless Resource.exists?(params[:number])
   return 400 unless params.has_key?('from') and params.has_key?('to')
   datetimeSTART = DateTime.iso8601(params["from"])
   datetimeEND = DateTime.iso8601(params["to"]) 
   user = params.has_key?("user") ? User.find_by_name(params["user"]) : User.find_by_name(ENV['USER_DEFAULT'])
-  bookings = bookings_from_resource_with_date(params[:number], datetimeSTART, datetimeEND, "approved")
+  resource = Resource.find_by_id(params[:number].to_i)
+  bookings = resource.bookings_with_date(datetimeSTART, datetimeEND, "approved")
   if bookings.empty?
     book = Booking.create(start: datetimeSTART, end_time: datetimeEND, resource_id: params[:number], user_id: user.id, status: "pending")
     status 201
-    return JSON.pretty_generate({book: {from: book.start.strftime('%Y-%m-%dT%H:%M:%SZ'), to: book.end_time.strftime('%Y-%m-%dT%H:%M:%SZ'), status: book.status,
-     links: [uri_booking(params[:number], book.id, "self"), link_book_accept(params[:number], book.id ), link_book_reject(params[:number], book.id ) ]}})
+    return JSON.pretty_generate({book: GenerateJson.book_json(book).merge({ links: GenerateJson.links_book(params[:number], book.id, url("")) })})
   else
     return 409 
   end
 end
 
 get '/resources/:number/bookings/:numberbook' do
+  return 404 unless Resource.exists?(params[:number])
   book = Booking.find_by_id(params[:numberbook])
-  return JSON.pretty_generate({from: book.start, to: book.end_time, status: book.status,
-     links: [uri_booking(params[:number], book.id, "self"), link_resource(params[:number], false), link_book_accept(params[:number], book.id ), link_book_reject(params[:number], book.id ) ]})
+  return JSON.pretty_generate(GenerateJson.book_json(book).merge({ links: GenerateJson.links_booking(params[:number], book.id, url("")) }) )
 end
 
 delete '/resources/:number/bookings/:numberbook' do
-  return 404 unless book_exists?(params[:numberbook])
+  return 404 unless Resource.exists?(params[:number])
+  return 404 unless Booking.exists?(params[:numberbook])
   book = Booking.destroy(params[:numberbook])
   status 200
 end
 
 put '/resources/:number/bookings/:numberbook' do
-  return 404 unless book_exists?(params[:numberbook])
+  return 404 unless Resource.exists?(params[:number])
+  return 404 unless Booking.exists?(params[:numberbook])
   book = Booking.find_by_id(params[:numberbook])
-  return 409 if does_resource_approved_book(params[:number],params[:numberbook], book.start, book.end_time)
+  resource = Resource.find_by_id(params[:number].to_i)
+  return 409 if resource.bookings_with_date(book.start, book.end_time, "approved").nil?
   status 200
   book.status = 'approved'
   book.save
-  bookings = bookings_from_resource_with_date(params[:number], book.start, book.end_time, "pending")
+  resource = Resource.find_by_id(params[:number].to_i)
+  bookings =  resource.bookings_with_date( book.start, book.end_time, "pending")
   bookings.each do |x|
     x.status = 'canceled'
     x.save
   end 
-  JSON.pretty_generate({book: {from: book.start, to: book.end_time, status: book.status,
-     links: [uri_booking(params[:number], book.id, "self"),
-      link_book_accept(params[:number], book.id ),
-      link_book_reject(params[:number], book.id ),
-      link_resource(params[:number], false) ]}})
+  JSON.pretty_generate({book: GenerateJson.book_json(book).merge({ links: GenerateJson.links_booking_put(params[:number], book.id, url("")) }) })
 end
