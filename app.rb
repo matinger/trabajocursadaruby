@@ -31,7 +31,12 @@ def load_fixture
   end
 end
 
-load_fixture if ENV['RACK_ENV']=='development'
+#load_fixture if ENV['RACK_ENV']=='development'
+
+def is_date(date_string)
+  y, m, d = date_string.split('-')
+  return Date.valid_date?(y.to_i, m.to_i, d.to_i ) if ( !y.nil? && !m.nil? && !d.nil? )
+end
 
 before do
   content_type :json
@@ -51,6 +56,7 @@ end
 
 get '/resources/:number/bookings' do
   return 404 unless Resource.exists?(params[:number].to_i)
+  return 400 if (params.has_key?("date") && !is_date(params["date"]))
   datetimeconv = params.has_key?("date") ? DateTime.iso8601(params["date"]+'T00:00:00Z') : DateTime.iso8601((Date.today + 1).to_s)
   limit = params.has_key?("limit") ? params["limit"] : "30"
   status = params.has_key?("status") ? params["status"] : "approved"
@@ -66,9 +72,11 @@ end
 
 get '/resources/:number/availability' do
   return 404 unless Resource.exists?(params[:number])
-  return 400 unless params.has_key?("date")
+  return 400 if !params.has_key?("limit")
+  return 400 if (params.has_key?("date") && !is_date(params["date"]))
   datetimeSTART = DateTime.iso8601(params["date"]+'T00:00:00Z')
-  datetimeEND = DateTime.iso8601(params["date"]+'T00:00:00Z') + params["limit"].to_i
+  limit = params["limit"]
+  datetimeEND = DateTime.iso8601(params["date"]+'T00:00:00Z') +limit.to_i
   resource = Resource.find_by_id(params[:number].to_i)
   bookings_approved = resource.availabilities(datetimeSTART, datetimeEND).collect {|x| x.merge({links: GenerateJson.links_availability(params[:number], url(""))} )} 
   JSON.pretty_generate({ availability: bookings_approved, links: [{rel: "self", uri: request.url}] })
@@ -76,7 +84,7 @@ end
 
 post '/resources/:number/bookings' do
   return 404 unless Resource.exists?(params[:number])
-  return 400 unless params.has_key?('from') and params.has_key?('to')
+  return 400 unless ((params.has_key?('from') && is_date(params["from"])) and (params.has_key?('to') && is_date(params["to"])))
   datetimeSTART = DateTime.iso8601(params["from"])
   datetimeEND = DateTime.iso8601(params["to"]) 
   user = params.has_key?("user") ? User.find_by_name(params["user"]) : User.find_by_name(ENV['USER_DEFAULT'])
@@ -93,7 +101,9 @@ end
 
 get '/resources/:number/bookings/:numberbook' do
   return 404 unless Resource.exists?(params[:number])
+  return 404 unless Booking.exists?(params[:numberbook])
   book = Booking.find_by_id(params[:numberbook])
+  status 200
   return JSON.pretty_generate(GenerateJson.book_json(book).merge({ links: GenerateJson.links_booking(params[:number], book.id, url("")) }) )
 end
 
@@ -109,7 +119,7 @@ put '/resources/:number/bookings/:numberbook' do
   return 404 unless Booking.exists?(params[:numberbook])
   book = Booking.find_by_id(params[:numberbook])
   resource = Resource.find_by_id(params[:number].to_i)
-  return 409 if resource.bookings_with_date(book.start, book.end_time, "approved").nil?
+  return 409 if !resource.bookings_with_date(book.start, book.end_time, "approved").empty?
   status 200
   book.status = 'approved'
   book.save
